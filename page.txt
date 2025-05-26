@@ -1,0 +1,227 @@
+"use client"
+
+import { useState, useEffect, useCallback } from "react"
+import { MobileHeader } from "../components/mobile-header"
+import { GlobalMarketList } from "../components/global-market-list"
+import { MobileTradingChart } from "../components/mobile-trading-chart"
+import { MobileTradingPanel } from "../components/mobile-trading-panel"
+import { MobilePortfolioView } from "../components/mobile-portfolio-view"
+import { EnhancedDataStatus } from "../components/enhanced-data-status"
+import { useEnhancedWebData } from "../hooks/useEnhancedWebData"
+import { usePortfolio } from "../hooks/usePortfolio"
+import { useWebSocket } from "../hooks/useWebSocket"
+import { DebugPanel } from "../components/debug-panel"
+import { usePageTransition } from "../hooks/usePageTransition"
+import { PageTransition } from "../components/page-transition"
+import { MobileNavigation } from "../components/mobile-navigation"
+import { MARKET_CATEGORIES } from "../lib/global-market-data"
+import type { GlobalAsset } from "../lib/global-market-data"
+import type { Asset } from "../types/trading"
+
+export default function EnhancedTradingEngine() {
+  const [selectedAsset, setSelectedAsset] = useState<GlobalAsset | null>(null)
+  const [selectedCategory, setSelectedCategory] = useState<string>("all")
+  const [searchQuery, setSearchQuery] = useState("")
+
+  const {
+    assets: globalAssets,
+    loading,
+    error,
+    lastUpdate,
+    isConnected,
+    dataSource,
+    manualRefresh,
+    retryCount,
+    maxRetries,
+  } = useEnhancedWebData({
+    updateInterval: 30000, // 30 seconds between updates
+    enabled: true,
+    maxRetries: 3, // Reduced retries since we have good fallbacks
+  })
+
+  const { portfolio, trades, executeTrade, updatePositionPrices } = usePortfolio()
+  const { isConnected: wsConnected } = useWebSocket(globalAssets.map((asset) => asset.symbol))
+
+  // Convert GlobalAsset to Asset for compatibility
+  const convertToAsset = useCallback(
+    (globalAsset: GlobalAsset): Asset => ({
+      symbol: globalAsset.symbol,
+      name: globalAsset.name,
+      type: globalAsset.type as "stock" | "bond" | "forex",
+      price: globalAsset.price,
+      change: globalAsset.change,
+      changePercent: globalAsset.changePercent,
+      volume: globalAsset.volume,
+      high24h: globalAsset.high24h,
+      low24h: globalAsset.low24h,
+      marketCap: globalAsset.marketCap,
+    }),
+    [],
+  )
+
+  const assets: Asset[] = globalAssets.map(convertToAsset)
+
+  // Filter assets by category
+  const filteredAssets = globalAssets.filter((asset) => {
+    if (selectedCategory === "all") return true
+    return asset.category === selectedCategory
+  })
+
+  // Search assets
+  const searchAssets = useCallback(
+    (query: string): GlobalAsset[] => {
+      if (!query.trim()) return filteredAssets
+
+      const searchTerm = query.toLowerCase()
+      return filteredAssets.filter(
+        (asset) =>
+          asset.symbol.toLowerCase().includes(searchTerm) ||
+          asset.name.toLowerCase().includes(searchTerm) ||
+          asset.exchange.toLowerCase().includes(searchTerm) ||
+          asset.country.toLowerCase().includes(searchTerm),
+      )
+    },
+    [filteredAssets],
+  )
+
+  // Get filtered assets for search
+  const displayAssets = searchQuery ? searchAssets(searchQuery) : filteredAssets
+
+  // Update portfolio positions with current prices
+  useEffect(() => {
+    if (assets.length > 0) {
+      updatePositionPrices(assets)
+    }
+  }, [assets, updatePositionPrices])
+
+  const handleTrade = useCallback(
+    (type: "buy" | "sell", quantity: number, price: number) => {
+      if (selectedAsset) {
+        try {
+          executeTrade(selectedAsset.symbol, type, quantity, price)
+          console.log(`Trade successful: ${type} ${quantity} ${selectedAsset.symbol}`)
+        } catch (error) {
+          console.error("Trade failed:", error)
+          alert(error instanceof Error ? error.message : "Trade failed")
+        }
+      }
+    },
+    [selectedAsset, executeTrade],
+  )
+
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query)
+  }, [])
+
+  const { isTransitioning, currentPage, navigateToPage } = usePageTransition()
+
+  const handleNavigateToChart = useCallback(() => {
+    navigateToPage("chart")
+  }, [navigateToPage])
+
+  const handleNavigate = useCallback(
+    (page: string) => {
+      navigateToPage(page)
+    },
+    [navigateToPage],
+  )
+
+  const handleAssetSelect = useCallback((globalAsset: GlobalAsset) => {
+    setSelectedAsset(globalAsset)
+  }, [])
+
+  if (loading && globalAssets.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-900 mx-auto"></div>
+          <p className="mt-4 text-gray-600 text-lg">Loading Global Market Data</p>
+          <p className="text-sm text-blue-600">Connecting to financial data sources...</p>
+          <div className="mt-4 text-xs text-gray-500 space-y-1">
+            <div>🟡 Trying Yahoo Finance API...</div>
+            <div>🟢 Checking CoinGecko for crypto data...</div>
+            <div>🔵 Preparing realistic simulations...</div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      <MobileHeader
+        portfolio={portfolio}
+        assets={assets}
+        selectedAsset={selectedAsset ? convertToAsset(selectedAsset) : null}
+        onSelectAsset={(asset) => {
+          const globalAsset = globalAssets.find((ga) => ga.symbol === asset.symbol)
+          if (globalAsset) setSelectedAsset(globalAsset)
+        }}
+        onNavigateToChart={handleNavigateToChart}
+        onSearch={handleSearch}
+        isConnected={isConnected || wsConnected}
+        loading={loading}
+      />
+
+      {/* Enhanced Data Status */}
+      <div className="p-4">
+        <EnhancedDataStatus
+          isConnected={isConnected}
+          loading={loading}
+          error={error}
+          lastUpdate={lastUpdate}
+          dataSource={dataSource}
+          onManualRefresh={manualRefresh}
+          retryCount={retryCount}
+          maxRetries={maxRetries}
+          assetsCount={globalAssets.length}
+        />
+      </div>
+
+      <div className="pb-16">
+        {currentPage === "markets" && (
+          <PageTransition isTransitioning={isTransitioning}>
+            <div className="p-4">
+              <GlobalMarketList
+                assets={displayAssets}
+                categories={MARKET_CATEGORIES}
+                selectedCategory={selectedCategory}
+                onCategoryChange={setSelectedCategory}
+                onAssetSelect={handleAssetSelect}
+                selectedAsset={selectedAsset}
+                onNavigateToChart={handleNavigateToChart}
+                isConnected={isConnected}
+                lastUpdate={lastUpdate}
+              />
+            </div>
+          </PageTransition>
+        )}
+
+        {currentPage === "chart" && selectedAsset && (
+          <PageTransition isTransitioning={isTransitioning}>
+            <MobileTradingChart asset={convertToAsset(selectedAsset)} assets={assets} />
+          </PageTransition>
+        )}
+
+        {currentPage === "portfolio" && (
+          <PageTransition isTransitioning={isTransitioning}>
+            <MobilePortfolioView portfolio={portfolio} trades={trades} />
+          </PageTransition>
+        )}
+      </div>
+
+      {/* Custom Mobile Navigation */}
+      <MobileNavigation currentPage={currentPage} onNavigate={handleNavigate} />
+
+      {/* Trading Panel - Floating Action Button */}
+      {selectedAsset && (
+        <MobileTradingPanel asset={convertToAsset(selectedAsset)} balance={portfolio.balance} onTrade={handleTrade} />
+      )}
+
+      {/* Debug Panel - only visible in development */}
+      {process.env.NODE_ENV === "development" && selectedAsset && (
+        <DebugPanel portfolio={portfolio} selectedAsset={convertToAsset(selectedAsset)} onTrade={handleTrade} />
+      )}
+    </div>
+  )
+}

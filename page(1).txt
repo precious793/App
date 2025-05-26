@@ -1,0 +1,135 @@
+"use client"
+
+import { useState, useEffect, useCallback } from "react"
+import { TradingHeader } from "../../components/trading-header"
+import { AssetList } from "../../components/asset-list"
+import { TradingChart } from "../../components/trading-chart"
+import { TradingPanel } from "../../components/trading-panel"
+import { OrderBook } from "../../components/order-book"
+import { PortfolioView } from "../../components/portfolio-view"
+import { useMarketData } from "../../hooks/useMarketData"
+import { usePortfolio } from "../../hooks/usePortfolio"
+import { useWebSocket } from "../../hooks/useWebSocket"
+import { usePageTransition } from "../../hooks/usePageTransition"
+import { PageTransition } from "../../components/page-transition"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+
+export default function DesktopTradingEngine() {
+  const { assets, selectedAsset, setSelectedAsset, loading } = useMarketData()
+  const { portfolio, trades, executeTrade, updatePositionPrices } = usePortfolio()
+  const [searchQuery, setSearchQuery] = useState("")
+  const { isTransitioning, currentPage, navigateToPage } = usePageTransition()
+
+  const { isConnected } = useWebSocket(assets.map((asset) => asset.symbol))
+
+  const handleUpdatePositionPrices = useCallback(() => {
+    if (assets.length > 0) {
+      updatePositionPrices(assets)
+    }
+  }, [assets, updatePositionPrices])
+
+  useEffect(() => {
+    handleUpdatePositionPrices()
+  }, [handleUpdatePositionPrices])
+
+  const handleTrade = useCallback(
+    (type: "buy" | "sell", quantity: number, price: number) => {
+      if (selectedAsset) {
+        try {
+          executeTrade(selectedAsset.symbol, type, quantity, price)
+          console.log(`Trade successful: ${type} ${quantity} ${selectedAsset.symbol}`)
+        } catch (error) {
+          console.error("Trade failed:", error)
+          alert(error instanceof Error ? error.message : "Trade failed")
+        }
+      }
+    },
+    [selectedAsset, executeTrade],
+  )
+
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query)
+  }, [])
+
+  const handleNavigateToChart = useCallback(() => {
+    navigateToPage("chart")
+  }, [navigateToPage])
+
+  if (loading || !selectedAsset) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-900 mx-auto"></div>
+          <p className="mt-4 text-gray-600 text-lg">Loading market data...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      <TradingHeader
+        portfolio={portfolio}
+        assets={assets}
+        selectedAsset={selectedAsset}
+        onSelectAsset={setSelectedAsset}
+        onSearch={handleSearch}
+        isConnected={isConnected}
+        loading={loading}
+      />
+
+      <div className="p-6">
+        <Tabs value={currentPage} onValueChange={navigateToPage} className="w-full">
+          <TabsList className="grid w-full grid-cols-3 max-w-md">
+            <TabsTrigger value="markets">Markets</TabsTrigger>
+            <TabsTrigger value="chart">Chart</TabsTrigger>
+            <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="markets" className="mt-6">
+            <PageTransition isTransitioning={isTransitioning}>
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <div className="lg:col-span-1">
+                  <AssetList
+                    assets={assets}
+                    selectedAsset={selectedAsset}
+                    onSelectAsset={setSelectedAsset}
+                    onNavigateToChart={handleNavigateToChart}
+                    searchQuery={searchQuery}
+                  />
+                </div>
+                <div className="lg:col-span-2">
+                  <TradingChart asset={selectedAsset} assets={assets} />
+                </div>
+                <div className="lg:col-span-1 space-y-6">
+                  <TradingPanel asset={selectedAsset} balance={portfolio.balance} onTrade={handleTrade} />
+                  <OrderBook symbol={selectedAsset?.symbol || ""} currentPrice={selectedAsset?.price || 0} />
+                </div>
+              </div>
+            </PageTransition>
+          </TabsContent>
+
+          <TabsContent value="chart" className="mt-6">
+            <PageTransition isTransitioning={isTransitioning}>
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <div className="lg:col-span-3">
+                  <TradingChart asset={selectedAsset} assets={assets} />
+                </div>
+                <div className="lg:col-span-1 space-y-6">
+                  <TradingPanel asset={selectedAsset} balance={portfolio.balance} onTrade={handleTrade} />
+                  <OrderBook symbol={selectedAsset?.symbol || ""} currentPrice={selectedAsset?.price || 0} />
+                </div>
+              </div>
+            </PageTransition>
+          </TabsContent>
+
+          <TabsContent value="portfolio" className="mt-6">
+            <PageTransition isTransitioning={isTransitioning}>
+              <PortfolioView portfolio={portfolio} trades={trades} />
+            </PageTransition>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  )
+}
